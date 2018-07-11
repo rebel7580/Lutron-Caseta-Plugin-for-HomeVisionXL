@@ -1,7 +1,7 @@
 # Caseta Client plugin for HomeVision - Ron Boston
 # Version 0.1
-# $Revision: 1.3 $
-# $Date: 2018/07/11 00:39:46 $
+# $Revision: 1.4 $
+# $Date: 2018/07/11 22:03:59 $
 # $Requires: HomeVisionXL 2.3 $
 
 # This plugin uses features introduced in version 2.3
@@ -9,7 +9,7 @@ if {[hvVersion] < 2.0 || ![package vsatisfies [hvVersion] 2.3-]} {
     error "Need HomeVisionXL version 2.3 or higher"
 }
 
-set version {$Id: caseta.hap,v 1.3 2018/07/11 00:39:46 ron Exp $}
+set version {$Id: caseta.hap,v 1.4 2018/07/11 22:03:59 ron Exp $}
 
 hvImport debug
 
@@ -51,22 +51,22 @@ proc startClient {attempts} {
     set loginStatus 0
     catch {close $sockChan}
     if {$cfg(username) eq "" || $cfg(password) eq ""} {
-        debug "No username/password" red
+        casetaLog "No username/password" red
         return
     }
-    debug "(Re)starting Client" blue
+    casetaLog "(Re)starting Client" blue
     if {[catch {socket $cfg(HubIP) $cfg(HubPort)} sockChan]} {
-        debug "*** Client FAILED ***: $sockChan" red
+        casetaLog "*** Client FAILED ***: $sockChan" red
         if {$attempts > 0} {
-            debug "Retrying..." red
+            casetaLog "Retrying..." red
             after 2000 [list startClient [incr attempts -1]]
         } else {
-            debug "No more attempts" red
+            casetaLog "No more attempts" red
         }
         return
     }
     chan configure $sockChan -blocking false
-    debug "Client Started: $sockChan, [chan configure $sockChan -sockname]" darkslategray
+    casetaLog "Client Started: $sockChan, [chan configure $sockChan -sockname]" darkslategray
     # set up to read data from socket
     chan event $sockChan readable [list readData $sockChan]
 }
@@ -103,6 +103,7 @@ proc parseLine {s line} {
         "assword" {
             sendData $cfg(password)
             set statusIndex 0
+            casetaLog "logged in"
         }
         "~OUTPUT" {
             processOutput $line
@@ -111,7 +112,10 @@ proc parseLine {s line} {
             processDevice $line
         }
         "~ERROR" {
+            regsub -all {GNET>} $line "" line
+            set line [string map {> "" " " "" \n ""} $line]
             debug "$line" red
+            casetaLog $line
         }
         ">" {
             debug "prompt" blue
@@ -124,7 +128,7 @@ proc parseLine {s line} {
         }
     }
 }
-
+ 
 proc doOneStatus {} {
     if {[getStatus]} {
         after idle [list after 0 doOneStatus]
@@ -159,20 +163,24 @@ proc processOutput {line} {
     debug "[dict get $deviceState]" blue
     if {$cfg(mqttEnable)} {
         if {![info exists CasetaConfig] || ![dict exists $CasetaConfig Zones ID]} {return}
-        if {$level == 0} {
-            set payload "OFF"
-        } else {
-            set payload "ON $level"
-        }
+    if {$level == 0} {
+        set payload "OFF"
+    } else {
+        set payload "ON $level"
+    }
         mqttcomm $cfg(netioType) stat <[dict get $CasetaConfig Zones ID $id]> $payload
     }
+    casetaLog $line
     createDevList
 }
  
  proc processDevice {line} {
-    set line [lindex [split $line "\n"] 0]
+
+    regsub -all {GNET>} $line "" line
+    set line [string map {> "" " " "" \n ""} $line]
     debug "received DEVICE:$line" darkgreen
     lassign [split $line ","] type id action level ramp
+    casetaLog $line
 }
 
 proc sendData {resp} {
@@ -209,9 +217,10 @@ proc sendCmd {name state} {
 }
 
 #! Write Caseta status information to log file
-proc casetaLog {str} {
+proc casetaLog {str {color red}} {
     global loghandle casetaLogdate cfg txtext
 
+    debug $str $color
     if {!$cfg(logging)} return
     set time [clock seconds]
     set date [clock format $time -format %y%m%d]
@@ -239,7 +248,6 @@ proc casetaLog {str} {
         }
         set casetaLogdate $date
     }
-    debug $str red
     puts -nonewline $loghandle "[clock format $time -format "%d.%m.%Y %H.%M.%S"]\t$str\n"
     catch {flush $loghandle}
 }
@@ -364,10 +372,10 @@ proc cfg_caseta {} {
     ttk::toplevel .caseta
     wm withdraw .caseta
     wm title .caseta "Caseta Configuration"
-    # wm resizable .caseta 0 0
+   # wm resizable .caseta 0 0
     
     ttk::notebook .caseta.nb
-    # Settings Tab
+        # Settings Tab
     ttk::frame .caseta.nb.f2
     ttk::label .caseta.nb.f2.l12 -text "Caseta SmartHub IP Address:" -anchor e
     ttk::entry .caseta.nb.f2.e12 -width 25  -textvariable cfg(HubIP)
@@ -476,7 +484,7 @@ proc cfg_caseta {} {
     if {[lindex $cfg(listWidths) 2]} {
         .caseta.nb select  [lindex $cfg(listWidths) 2]
     }
-
+ 
     wm protocol .caseta WM_DELETE_WINDOW {.caseta.b3 invoke}
 
     if {[regexp {\+-?[0-9]+\+-?[0-9]+} $cfg(geometry)]} {
@@ -633,7 +641,7 @@ proc cfg_rtclksetto {} {
 
 proc cfg_done {} {
     global cfg currentItem
-
+    
 
     mk::loop row cfg.main {
         array set tmpcfg [mk::get $row name value]
@@ -646,7 +654,6 @@ proc cfg_done {} {
         startClient $cfg(attempts)
     }
     if {$tmpcfg(CasetaConfigFile) ne $cfg(CasetaConfigFile)} {
-        debug "here" red
         getCasetaConfig
     }
     if {$tmpcfg(serPre) ne $cfg(serPre)} {
@@ -656,7 +663,7 @@ proc cfg_done {} {
     saveconfig
     startClient $cfg(attempts)
     subscribe
-
+    
     set currentItem ""
     destroy .caseta
 }
@@ -667,7 +674,7 @@ proc getCasetaConfig {} {
     
     debug $cfg(CasetaConfigFile) blue
     unset -nocomplain CasetaConfig
-    
+
     if {[catch {open $cfg(CasetaConfigFile) r} cf]} {
         debug "Failed to open Caseta Config file" red
         tk_messageBox -icon error -message "Failed to open Config File" -detail "$cfg(CasetaConfigFile)\nCheck file path."
@@ -729,7 +736,7 @@ proc netioaction {args} {
 hvPublic -origin netio
 proc netio {args} {
     global cfg deviceState CasetaConfig
-    
+
     debug "netio: $args" red
     set args [lassign $args origin]
     if {!$cfg(mqttEnable) && [string match -nocase {mqtt*} $origin]} {return ""}
