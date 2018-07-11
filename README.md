@@ -8,10 +8,9 @@
 <h2>Overview</h2>
 The Caseta Client plug-in provides a way to interface Lutron Caseta switches to HomeVision.
 Control of the switches canbe via a serial command (from your HomeVision controller schedule or from other plug-ins), via Netio, or via MQTT, in conjunction with https://github.com/rebel7580/MQTT-Plug-in-For-HomeVisionXL.
-
-<h3>Getting Started</h3>
-    <b>This plug-in only works with the Lutron Smart Bridge Pro, NOT the non-Pro version!</b>
 <br><br>
+<b>This plug-in only works with the Lutron Smart Bridge Pro, NOT the non-Pro version!</b>
+<h3>Getting Started</h3>
 Caseta switches are automatically configured in the plug-in using a file obtained from the Lutron application.
 <br><br>
 <ol>
