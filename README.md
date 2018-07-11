@@ -2,7 +2,7 @@
 <!-- $Date: 2018/07/11 18:30:16 $ -->
 <html>
 <body>
-**This is Beta Software. Please report issues via the homevision users group**
+    <b>This is Beta Software. Please report issues via the homevision users group</b>
 
 <h1>Lutron Caseta Plugin for HomeVisionXL</h1>
 <h2>Overview</h2>
