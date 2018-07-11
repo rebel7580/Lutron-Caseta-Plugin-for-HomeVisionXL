@@ -4,7 +4,6 @@
 
 <body>
 <h1>Lutron Caseta Plugin for HomeVisionXL</h1>
-<font size=12><font color=#0000FF><b>Caseta Client Plug-in</b></font></font>
 <h2>Overview</h2>
 The Caseta Client plug-in provides a way to interface Lutron Caseta switches to HomeVision.
 <h3>Getting Started</h3>
