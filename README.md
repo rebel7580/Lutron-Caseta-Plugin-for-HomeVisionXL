@@ -10,6 +10,7 @@ The Caseta Client plug-in provides a way to interface Lutron Caseta switches to 
 This plug-in only works with the Lutron Smart Bridge Pro, NOT the non-Pro version!
 <br><br>
 Caseta switches are automatically configured in the plug-in using a file obtained from the Lutron application.
+    
 <ol>
 <li>Before you can set up the plug-in, you must configure the lights and scenes within the Lutron application.
 The names you assign to your switches are the names you will use in the plug-in.
