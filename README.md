@@ -17,7 +17,7 @@ The HomeVisionXL Caseta Plug-in package consists of the following files:
 * caseta.hlp - the help file,
 
 Click the "Clone or Download" button, then select "Download ZIP".
-Extract the above five files into your plugin folder.
+Extract the above files into your plugin folder.
 You can delete README.md and LICENSE.
 
 The plug-in should be enabled via the Plug-in manager.
