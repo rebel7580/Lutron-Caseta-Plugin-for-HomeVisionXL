@@ -1,7 +1,10 @@
 # Auto detect text files and perform LF normalization
 * text=auto
 <<<<<<< HEAD
+<<<<<<< HEAD
 
 =======
 >>>>>>> 05f40ae3a1508ec7d0032a285de234a4d5bc73bc
+=======
+>>>>>>> 1c7f44801bee98d4fb1cd69c08c6611f8a2977c2
 *.hap linguist-language=TCL
