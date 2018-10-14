@@ -24,7 +24,7 @@ The plug-in should be enabled via the Plug-in manager.
 
 # Change Log
 
-The Change Log can be found in the Wiki section [Here](https://github.com/rebel7580/MLutron-Caseta-Plugin-for-HomeVisionXL/wiki/Change-Log).
+The Change Log can be found in the Wiki section [Here](https://github.com/rebel7580/Lutron-Caseta-Plugin-for-HomeVisionXL/wiki/Change-Log).
 
 # Help
 
