@@ -1,7 +1,7 @@
 # Caseta Client plugin for HomeVision - Ron Boston
 # Version 2.0
-# $Revision: 1.6 $
-# $Date: 2018/07/30 22:01:32 $
+# $Revision: 1.9 $
+# $Date: 2018/10/14 16:19:50 $
 # $Requires: HomeVisionXL 2.3 $
 
 # This plugin uses features introduced in version 2.3
@@ -9,7 +9,7 @@ if {[hvVersion] < 2.0 || ![package vsatisfies [hvVersion] 2.3-]} {
     error "Need HomeVisionXL version 2.3 or higher"
 }
 
-set version {$Id: caseta.hap,v 1.6 2018/07/30 22:01:32 ron Exp $}
+set version {$Id: caseta.hap,v 1.9 2018/10/14 16:19:50 ron Exp $}
 
 hvImport debug
 hvImport action
@@ -130,7 +130,7 @@ proc parseLine {s line} {
         }
     }
 }
- 
+
 proc doOneStatus {} {
     if {[getStatus]} {
         after idle [list after 0 doOneStatus]
@@ -168,6 +168,12 @@ proc processOutput {line} {
     if {$row ne ""} {
         lassign [mk::get cfg.devices!$row flag macro_on macro_off loglevel varflag] flag macro_on macro_off loglevel varflag
     }
+    if {![string is integer -strict $level] && ![string is double -strict $level] } {
+        if {$loglevel & 0x01} {
+            casetaLog "Invalid level:$level;line:$line;" red
+        }
+        return
+    }
     if {$level == 0} {
         if {$flag ne "" && $flag < 512} {
             if {$flag < 256} {
@@ -198,7 +204,7 @@ proc processOutput {line} {
         if {$macro_on ne "" && $macro_on < 256} {
             action macro run $macro_on
         }
-        set payload "ON $level"
+        set payload "ON [expr {int($level)}]"
     }
 
     if {$cfg(mqttEnable)} {
@@ -220,7 +226,7 @@ proc processOutput {line} {
     set row [mk::select cfg.devices id $id]
     if {$row ne ""} {
         if {[mk::get cfg.devices!$row loglevel] & 0x01} {
-    casetaLog $line
+            casetaLog $line
         }
     }
 }
@@ -236,23 +242,47 @@ proc sendData {resp} {
     chan flush $sockChan
 } 
 
-proc sendCmd {name state} {
+# sendCmd
+#
+# if called with name, state:
+#    name must be a device name
+#    state must be 0-100
+# if called by name only, name must be in one of the following forms:
+#    device name on         - on 100%
+#    device name on 0-100   - on 0-100%
+#    device name 0-100      - on 0-100%
+#    device name off        - off
+proc sendCmd {name {state ""}} {
     global CasetaConfig
     
-    debug "sendCmd:$name,$state" blue
+    debug "sendCmd:$name,$state;" blue
+    
+    if {$state eq ""} {
+        set state [lindex $name end]
+        set name [lrange $name 0 end-1]
+        if {[string equal -nocase $state "on"]} {
+            set st 100
+        } elseif {[string equal -nocase $state "off"]} {
+            set st 0
+        } else {
+                if {![string is integer -strict $state] || \
+                    $state < 0 || $state > 100} {
+                    return
+                }
+                scan $state %d st
+            if {[lindex $name end] eq "on"} {
+                set name [lrange $name 0 end-1]
+            }
+        }
+    } else {
+        set st $state
+    }
+    debug "5:name:$name,state:$state;st:$st;" red
+
     set name [join $name]
     if {![info exists CasetaConfig] || ![dict exists $CasetaConfig Zones Name $name]} {return}
     debug "[dict get $CasetaConfig Zones];[dict exists $CasetaConfig Zones Name $name];" red
     set id [dict get $CasetaConfig Zones Name $name]
-    if {[string equal -nocase $state "off"]} {
-        set st 0
-    } elseif {[string equal -nocase $state "on"]} {
-        set st 100
-    } elseif {([string is integer -strict $state] || [string is double -strict $state]) && $state >= 0 && $state <= 100} {
-        scan $state %d st
-    } else {
-        return
-    }
     set resp [join [list "#OUTPUT" $id 1 $st] ","]
 
     set row [mk::select cfg.devices id $id]
@@ -376,7 +406,7 @@ proc loadConfig {} {
         set idx [mk::select cfg.devices id $id]
         if {$idx == ""} {
             mk::row append cfg.devices name $name id $id state "" flag 512 macro_on 256 macro_off 256 varflag 0 loglevel 0
-    set saveflag 1
+            set saveflag 1
             set size [mk::view size cfg.devices]
 debug "$size " darkred
             incr size -1
@@ -441,10 +471,10 @@ proc cfg_caseta {} {
     ttk::toplevel .caseta
     wm withdraw .caseta
     wm title .caseta "Caseta Configuration"
-   # wm resizable .caseta 0 0
+    # wm resizable .caseta 0 0
     
     ttk::notebook .caseta.nb
-        # Settings Tab
+    # Settings Tab
     ttk::frame .caseta.nb.f2
     ttk::label .caseta.nb.f2.l12 -text "Lutron Smart Bridge IP Address:" -anchor e
     ttk::entry .caseta.nb.f2.e12 -width 25  -textvariable cfg(HubIP)
@@ -541,8 +571,8 @@ proc cfg_caseta {} {
 
     destroy .rtclkMenu
     set m [menu .rtclkMenu]
-    $m add command -label "Off" -command {cfg_rtclkdlg Off}
-    $m add command -label "On" -command {cfg_rtclkdlg On}
+    $m add command -label "Off" -command {cfg_rtclkdlg 0}
+    $m add command -label "On" -command {cfg_rtclkdlg 100}
     $m add command -label "Set To" -command {cfg_rtclkdlg setto}
     bind .caseta.nb.f1.lb.l <Button-3> {cfg_rtclk %W %x %y %X %Y}
 
@@ -563,7 +593,7 @@ proc cfg_caseta {} {
     if {[lindex $cfg(listWidths) 2]} {
         .caseta.nb select  [lindex $cfg(listWidths) 2]
     }
- 
+
     wm protocol .caseta WM_DELETE_WINDOW {.caseta.b3 invoke}
 
     if {[regexp {\+-?[0-9]+\+-?[0-9]+} $cfg(geometry)]} {
@@ -625,7 +655,7 @@ proc sel_directory {top name} {
 
 proc sel_file {top name} {
     global dir
-    
+
     upvar #0 $name var
     set file [tk_getOpenFile -initialdir $dir -initialfile $var  \
       -parent $top -title "Select Caseta CVonfig File"]
@@ -635,7 +665,7 @@ proc sel_file {top name} {
 # Create device list, with updated state
 proc createDevList {} {
     global CasetaConfig deviceState currentItem
-    
+
     if {[winfo exist .caseta.usr]} {return}
     if {[winfo exist .caseta]} {
         if {![info exists CasetaConfig] || ![dict exists $CasetaConfig Zones Name]} {return}
@@ -691,7 +721,7 @@ proc createDevList {} {
 
 # put up device right-click menu
 proc cfg_rtclk {w x y X Y} {
-       
+
     set item [$w identify item $x $y]
     if {$item ne ""} {
         $w selection set $item
@@ -702,7 +732,7 @@ proc cfg_rtclk {w x y X Y} {
 # process command selected in right-click menu
 proc cfg_rtclkdlg {cmd} {
     global currentItem
-    
+
     if {$cmd eq "setto"} {
         cfg_rtclksettodlg
     } else {
@@ -714,13 +744,13 @@ proc cfg_rtclkdlg {cmd} {
 
 proc cfg_rtclksettodlg {} {
     global setto
-    
+
     debug setto red
     ttk::toplevel .caseta.st
     wm title .caseta.st "Set Device"
     wm transient .caseta.st .caseta
     wm withdraw .caseta.st
-    
+
     ttk::frame .caseta.st.f1
     ttk::label .caseta.st.f1.l1 -text "Set to Value:" -anchor w
     ttk::entry .caseta.st.f1.e1 -width 5 -textvariable setto
@@ -745,7 +775,7 @@ proc cfg_rtclksettodlg {} {
 
 proc cfg_rtclksetto {} {
     global setto currentItem
-    
+
     if {[string is integer -strict $setto] || [string is double -strict $setto] } {
         set win .caseta.nb.f1.lb.l
         set currentItem [lindex [$win selection] 0]
@@ -1025,7 +1055,7 @@ proc createmacrolist {widget var} {
 
 proc cfg_done {} {
     global cfg currentItem
-    
+
     mk::loop row cfg.main {
         array set tmpcfg [mk::get $row name value]
     }
@@ -1046,7 +1076,7 @@ proc cfg_done {} {
     saveconfig
     startClient $cfg(attempts)
     subscribe
-    
+
     set currentItem ""
     destroy .caseta
 }
@@ -1054,7 +1084,7 @@ proc cfg_done {} {
 package require json 1.0
 proc getCasetaConfig {} {
     global cfg CasetaConfig dir
-    
+
     debug $cfg(CasetaConfigFile) blue
     unset -nocomplain CasetaConfig
 
@@ -1092,7 +1122,7 @@ proc getCasetaConfig {} {
 
 # netioaction is called by NetIO "netioaction" command.
 # 
-# Example: sends: netioaction caseta name [off|on|0-100]
+# Example: sends: netioaction caseta name [off|on|on 0-100|0-100]
 # "caseta" must match config's netioType.
 # "name" must match an allowed device name.
 hvImport netioaction
@@ -1100,21 +1130,23 @@ hvPublic -origin netioaction
 proc netioaction {args} {
     global cfg
 
-    debug "netionaction:$args" red
+    debug "netioaction:$args" red
     set args [lassign $args origin]
     if {!$cfg(mqttEnable) && [string match -nocase {mqtt*} $origin]} {return ""}
     set state [lassign $args type]
     if {$type ne $cfg(netioType)} {return ""}
     if {$state eq ""} {return ""}
-    sendCmd [lrange $state 0 end-1] [lindex $state end]
+    sendCmd $state
 }
 
 # netio is called by NetIO "get" command.
 # 
-# Example: reads: get caseta name
+# Example: reads: get caseta {status_type} name
 # "caseta" must match config's netioType.
 # "name" must match an allowed device name.
-# Returns On/Off/level. 
+# "status_type", if present, must be:
+#    state, status, image, slider, name, namestate, or namestatus.
+# If "status_type" is not present, "status" is assumed.
 hvPublic -origin netio
 proc netio {args} {
     global cfg deviceState CasetaConfig
@@ -1122,18 +1154,59 @@ proc netio {args} {
     debug "netio: $args" red
     set args [lassign $args origin]
     if {!$cfg(mqttEnable) && [string match -nocase {mqtt*} $origin]} {return ""}
-    lassign $args type name
+    set name [lassign $args type state]
+    set state [string tolower $state]
+    if {$state ni {state status image slider name namestate namestatus}} {
+        lassign $args type name
+        set state status
+    }
     if {![info exists CasetaConfig] || ![dict exists $CasetaConfig Zones Name $name]} {return}
     if {$type ne $cfg(netioType)} {return ""}
     regexp {^<*([^<>]+)>*$} $name --> name
     set id [dict get $CasetaConfig Zones Name $name]
     if {[info exist deviceState] && [dict exists $deviceState id $id]} {
-        set level [dict get $deviceState id $id level] 
+        set level [expr {int([dict get $deviceState id $id level])}]
         if {$level == 0} {
-            return "OFF"
+            set rc "Off"
         } else {
-            return "ON $level"
+            set rc "On"
         }
+        debug "netio:rc:$rc;state:$state;" red
+        switch $state {
+            state {
+            }
+            status {
+                if {$level != 0} {
+                    set rc "$rc $level%"
+                }
+            }
+            image {
+        if {$level == 0} {
+                    rc "gray"
+        } else {
+                    rc "green"
+        }
+            }
+            slider {
+                set rc $level
+            }
+            name {
+                set rc $name
+            }
+            namestate {
+                set rc "$name: $rc"
+            }
+            namestatus {
+                if {$level != 0} {
+                    set rc "$rc $level%"
+                }
+                set rc "$name: $rc"
+            }
+            default {
+                set rc ""
+            }
+        }
+        return $rc
     } else {
         return ""
     }
@@ -1141,7 +1214,7 @@ proc netio {args} {
 
 # Serial string to trigger switch
 #
-# Example: caseta: name [off|on|0-100];
+# Example: caseta: name [off|on|on 0-100|0-100];
 # "caseta:" should be config's serPre (serial Prefix string).
 # "name" must match an allowed device name.
 # ";" should be config's serPost (serial terminator character(s)),
@@ -1151,14 +1224,14 @@ proc casetaSerial {data} {
     global cfg sockChan
 
     debug "serial: $data" red
-    set fmt [format {%s (.+)%s} $cfg(serPre) $cfg(serPost)]
+    set fmt [format {%1$s ([^%2$s]+)%2$s} $cfg(serPre) $cfg(serPost)]
     if {![regexp -nocase $fmt $data match state]} {
         debug "fail"
         return 0
     } elseif {$state eq ""} {
         return -1
     } else {
-        sendCmd [lrange $state 0 end-1] [lindex $state end]
+        sendCmd $state
         return [string length $match]
     }
 }
@@ -1186,9 +1259,9 @@ if {[hvGuiInit]} {
 
 proc init {} {
     global cfg
-    
+
     debug "Init!" blue
-    
+
     loadConfig
     cinit
     hvTrigger $cfg(serPre) [list casetaSerial]
@@ -1199,14 +1272,14 @@ proc cinit {} {
     global connected cfg
 
     debug "cinit!" blue
-    
+
     after cancel cinit
     if {!$connected} {
         after 2000 cinit
         debug "Not Connected to Controller, waiting" red
         return
     }
-    
+
     debug "Connected to Controller!" red
     startClient $cfg(attempts)
     subscribe
