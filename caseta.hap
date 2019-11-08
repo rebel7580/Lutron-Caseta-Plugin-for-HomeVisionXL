@@ -1,7 +1,7 @@
 # Caseta Client plugin for HomeVision - Ron Boston
 # Version 2.0
-# $Revision: 1.9 $
-# $Date: 2018/10/14 16:19:50 $
+# $Revision: 1.21 $
+# $Date: 2019/11/08 17:54:59 $
 # $Requires: HomeVisionXL 2.3 $
 
 # This plugin uses features introduced in version 2.3
@@ -9,7 +9,7 @@ if {[hvVersion] < 2.0 || ![package vsatisfies [hvVersion] 2.3-]} {
     error "Need HomeVisionXL version 2.3 or higher"
 }
 
-set version {$Id: caseta.hap,v 1.9 2018/10/14 16:19:50 ron Exp $}
+set version {$Id: caseta.hap,v 1.21 2019/11/08 17:54:59 ron Exp $}
 
 hvImport debug
 hvImport action
@@ -18,7 +18,6 @@ hvImport action
 set script [file normalize [file join [pwd] [info script]]]
 set dir [file dirname $script]
 set cfgfileroot [file tail [file rootname [info script]]]
-set txtext [expr {$tcl_platform(platform) eq "windows" ? ".txt" : ""}]
 lappend auto_path $dir
 tcl::tm::path add $dir
 
@@ -41,6 +40,7 @@ array set cfg {
     attempts    5
     mqttEnable  0
 }
+set cfg(txtext) [expr {$tcl_platform(platform) eq "windows" ? ".txt" : ""}]
 set cfg(CasetaConfigFile) [file join $dir CasetaConfig.json]
 
 # Start Client Section
@@ -161,73 +161,129 @@ proc processOutput {line} {
     set line [string map {> "" " " "" \n ""} $line]
     debug "received OUTPUT:$line" darkgreen
     lassign [split $line ","] type id action level ramp
+    if {(![string is integer -strict $level]  \
+         && ![string is double  -strict $level])} {
+        casetaLog "Invalid level:$level;line:$line;" red
+        return
+    }
+    if {![string is integer -strict $id]} {
+        casetaLog "Invalid id:$id;line:$line;" red
+        return
+    }
+    set found 0
+    foreach {i j} [dict get $CasetaConfig Zones ID] {
+        if {$i == $id} {
+            set found 1
+            break
+        }
+    }
+    if {$found == 0} {
+        casetaLog "Id not found:$id;line:$line;" red
+        return
+    }
+
     dict set deviceState id $id level $level
     debug "[dict get $deviceState]" blue
 
     set row [mk::select cfg.devices id $id]
     if {$row ne ""} {
         lassign [mk::get cfg.devices!$row flag macro_on macro_off loglevel varflag] flag macro_on macro_off loglevel varflag
-    }
-    if {![string is integer -strict $level] && ![string is double -strict $level] } {
-        if {$loglevel & 0x01} {
-            casetaLog "Invalid level:$level;line:$line;" red
-        }
-        return
-    }
     if {$level == 0} {
         if {$flag ne "" && $flag < 512} {
             if {$flag < 256} {
-                action flag clear $flag
+                    myaction flag clear $flag
             } else {
                 set flag [expr {$flag - 256}]
-                action var set $flag 0
-                action var update
+                    myaction var set $flag 0
+                    myaction var update
             }
         }
         if {$macro_off ne "" && $macro_off < 256} {
-            action macro run $macro_off
+                myaction macro run $macro_off
         }
         set payload "OFF"
     } else {
         if {$flag ne "" && $flag < 512} {
             if {$flag < 256} {
-                action flag set $flag
+                    myaction flag set $flag
             } else {
                 if {$varflag & 0x01} {
                     set level 1
                 }
                 set flag [expr {$flag - 256}]
-                action var set $flag [expr {int($level)}]
-                action var update
+                    myaction var set $flag [expr {int($level)}]
+                    myaction var update
             }
         }
         if {$macro_on ne "" && $macro_on < 256} {
-            action macro run $macro_on
+                myaction macro run $macro_on
         }
         set payload "ON [expr {int($level)}]"
     }
 
+        if {![info exists CasetaConfig] || ![dict exists $CasetaConfig Zones ID]} {
+            if {$loglevel & 0x01} {
+                casetaLog "Unknown: $line" darkgreen
+            }
+        } else {
     if {$cfg(mqttEnable)} {
-        if {![info exists CasetaConfig] || ![dict exists $CasetaConfig Zones ID]} {return}
         mqttcomm $cfg(netioType) stat <[dict get $CasetaConfig Zones ID $id]> $payload
     }
     if {$loglevel & 0x01} {
-        casetaLog $line darkgreen
+                casetaLog "[dict get $CasetaConfig Zones ID $id]: $line" darkgreen
+            }
     }
     createDevList
+    }
 }
  
  proc processDevice {line} {
+    global cfg CasetaConfig
 
     regsub -all {GNET>} $line "" line
     set line [string map {> "" " " "" \n ""} $line]
     debug "received DEVICE:$line" darkgreen
-    lassign [split $line ","] type id action level ramp
-    set row [mk::select cfg.devices id $id]
-    if {$row ne ""} {
-        if {[mk::get cfg.devices!$row loglevel] & 0x01} {
-            casetaLog $line
+    lassign [split $line ","] type id button action
+    if {![string is integer -strict $id]} {
+        casetaLog "Invalid id:$id;line:$line;" red
+        return
+    }
+    if {![string is integer -strict $button]} {
+        casetaLog "Invalid button:$id,$button;line:$line;" red
+        return
+    }
+    if {![string is integer -strict $action]} {
+        casetaLog "Invalid button:$id,$button;line:$line;" red
+        return
+    }
+    if {$action != 3} {
+        # ignore if not a "press" action
+        return
+    }
+    set found 0
+    foreach {i j} [dict get $CasetaConfig Devices Buttons $id] {
+        if {$j == $button} {
+            set found 1
+            break
         }
+    }
+    if {$found == 0} {
+        casetaLog "Id/button not found:$id,$button;line:$line;" red
+        return
+    }
+    set row [mk::select cfg.devices id $id:$button]
+    if {$row ne ""} {
+        lassign [mk::get cfg.devices!$row loglevel macro_on name] loglevel macro_on name
+        if {$macro_on ne "" && $macro_on < 256} {
+            myaction macro run $macro_on
+        }
+        if {$cfg(mqttEnable)} {
+            mqttcomm $cfg(netioType) stat <$name> On
+        }
+        if {$loglevel & 0x01} {
+            casetaLog "$name: $line" darkgreen
+        }
+        createDevList
     }
 }
 
@@ -236,8 +292,9 @@ proc sendData {resp} {
     
     if {[catch {chan puts $sockChan $resp} rc]} {
         debug "$sockChan: Send of $resp failed: $rc" red
+        discinit
     } else {
-        debug "$sockChan: Sent $resp"
+        debug "$sockChan: Sent $resp;"
     }
     chan flush $sockChan
 } 
@@ -281,7 +338,7 @@ proc sendCmd {name {state ""}} {
 
     set name [join $name]
     if {![info exists CasetaConfig] || ![dict exists $CasetaConfig Zones Name $name]} {return}
-    debug "[dict get $CasetaConfig Zones];[dict exists $CasetaConfig Zones Name $name];" red
+#    debug "[dict get $CasetaConfig Zones];[dict exists $CasetaConfig Zones Name $name];" red
     set id [dict get $CasetaConfig Zones Name $name]
     set resp [join [list "#OUTPUT" $id 1 $st] ","]
 
@@ -296,7 +353,7 @@ proc sendCmd {name {state ""}} {
 
 #! Write Caseta status information to log file
 proc casetaLog {str {color red}} {
-    global loghandle casetaLogdate cfg txtext
+    global loghandle casetaLogdate cfg
 
     debug $str $color
     if {!$cfg(logging)} return
@@ -311,7 +368,7 @@ proc casetaLog {str {color red}} {
             debug "Failed to access Caseta log directory" red
             return
         }
-        set file [file join $cfg(logpath) CasetaLog$date$txtext]
+        set file [file join $cfg(logpath) CasetaLog$date$cfg(txtext)]
         if {[file exists $file]} {
             set mod [file mtime $file]
             if {$time - $mod > 86400} {
@@ -360,6 +417,14 @@ proc subscribe {{type sub} {attempts 5}} {
     }
 }
 
+proc myaction {args} {
+    global connected
+    
+    if {$connected} {
+        action {*}$args
+    }
+}
+
 # End Client Section
 
 # Start Config Section
@@ -402,20 +467,38 @@ proc loadConfig {} {
     set saveflag 0
     getCasetaConfig
     foreach {name id} [dict get $CasetaConfig Zones Name] {
-        debug "$name,$id" red
         set idx [mk::select cfg.devices id $id]
         if {$idx == ""} {
             mk::row append cfg.devices name $name id $id state "" flag 512 macro_on 256 macro_off 256 varflag 0 loglevel 0
             set saveflag 1
             set size [mk::view size cfg.devices]
-debug "$size " darkred
             incr size -1
             debug "load:new:$idx:[mk::get cfg.devices!$size]" blue
-        } elseif {[mk::get cfg.devices!$idx name] != $name} {
+        } elseif {[mk::get cfg.devices!$idx name] ne $name} {
             mk::set cfg.devices!$idx name $name
             set saveflag 1
         } else {
             debug "load:no change: [mk::get cfg.devices!$idx]" blue
+        }
+    }
+    debug "[dict get $CasetaConfig Devices Name]" red
+    foreach {name id} [dict get $CasetaConfig Devices Name] {
+        foreach {butname number} [dict get $CasetaConfig Devices Buttons $id] {
+            set idx [mk::select cfg.devices id $id:$number]
+            if {$idx == ""} {
+                mk::row append cfg.devices name "$name $butname" id $id:$number state "" flag 512 macro_on 256 macro_off 256 varflag 0 loglevel 0
+                set saveflag 1
+                set size [mk::view size cfg.devices]
+                debug "$size " darkred
+                incr size -1
+                debug "load:new:$size:[mk::get cfg.devices!$size]" blue
+            } elseif {[mk::get cfg.devices!$idx name] ne "$name $butname"} {
+                mk::set cfg.devices!$idx name "$name $butname"
+                debug "load:name change:$idx: [mk::get cfg.devices!$idx]" blue
+                set saveflag 1
+            } else {
+                debug "load:no change:$idx: [mk::get cfg.devices!$idx]" blue
+            }
         }
     }
 
@@ -428,7 +511,6 @@ debug "$size " darkred
             set saveflag 1
         }
     }
-    
     
     if {$saveflag} {saveconfig}
 }
@@ -471,15 +553,12 @@ proc cfg_caseta {} {
     ttk::toplevel .caseta
     wm withdraw .caseta
     wm title .caseta "Caseta Configuration"
-    # wm resizable .caseta 0 0
     
     ttk::notebook .caseta.nb
     # Settings Tab
     ttk::frame .caseta.nb.f2
     ttk::label .caseta.nb.f2.l12 -text "Lutron Smart Bridge IP Address:" -anchor e
     ttk::entry .caseta.nb.f2.e12 -width 25  -textvariable cfg(HubIP)
-    
-#    bind .caseta.nb <<NotebookTabChanged>> {.caseta.f.f2.e17 selection clear; focus .caseta.nb.f2.e12; .caseta.nb.f2.e12 icursor end}
     
     ttk::label .caseta.nb.f2.l13 -text "Lutron Smart Bridge Port:" -anchor e
     ttk::entry .caseta.nb.f2.e13 -width 6 -justify center -textvariable cfg(HubPort)
@@ -497,6 +576,8 @@ proc cfg_caseta {} {
     ttk::label .caseta.nb.f2.l31 -text "Log Folder:" -anchor e
     ttk::entry .caseta.nb.f2.e31  -textvariable cfg(logpath) -state readonly
     ttk::button .caseta.nb.f2.b31 -width 0 -text "..." -command [list sel_directory .caseta cfg(logpath)]
+    ttk::label .caseta.nb.f2.l33 -text "Log File Extension:" -anchor e
+    ttk::entry .caseta.nb.f2.e33 -textvariable cfg(txtext)
 
     ttk::checkbutton .caseta.nb.f2.c32 -variable cfg(mqttEnable) -text "Enable MQTT"
     ttk::separator .caseta.nb.f2.sep
@@ -522,6 +603,7 @@ proc cfg_caseta {} {
     grid .caseta.nb.f2.l32 .caseta.nb.f2.e32 .caseta.nb.f2.b32 -sticky we -padx 3
     grid x .caseta.nb.f2.c31 -sticky nws  -padx 3 -pady 1
     grid .caseta.nb.f2.l31 .caseta.nb.f2.e31 .caseta.nb.f2.b31 -sticky we -padx 3
+    grid .caseta.nb.f2.l33 .caseta.nb.f2.e33 -sticky we -padx 3
     grid x .caseta.nb.f2.c32 -sticky nws  -padx 3 -pady 1
 
     grid .caseta.nb.f2.sep -column 0 -columnspan 2 -sticky ew -padx 3 -pady 3
@@ -537,9 +619,7 @@ proc cfg_caseta {} {
     grid columnconfigure .caseta.nb.f2 all -weight 1
     grid .caseta.nb.f2 -sticky news  -padx 5 -pady 5
 
-    cfg_logsel
-    
-    .caseta.nb add .caseta.nb.f2 -text "Settings" -underline 0
+#    .caseta.nb add .caseta.nb.f2 -text "Settings" -underline 0
    
        # Devices tab
     ttk::frame .caseta.nb.f1
@@ -547,11 +627,11 @@ proc cfg_caseta {} {
     ttk::treeview .caseta.nb.f1.lb.l -show {tree headings} -columns {id state flag macro} \
       -displaycolumns {id flag macro state} -yscrollcommand {.caseta.nb.f1.lb.s set}
     set w [font measure TkDefaultFont 0]
-    .caseta.nb.f1.lb.l column #0 -width [expr {20 * $w}] -stretch 1
+    .caseta.nb.f1.lb.l column #0 -width [expr {30 * $w}] -stretch 1
     .caseta.nb.f1.lb.l heading id -text "ID"
     .caseta.nb.f1.lb.l column id -width [expr {6 * $w}] -stretch 0 -anchor center
     .caseta.nb.f1.lb.l heading state -text "State"
-    .caseta.nb.f1.lb.l column state -width [expr {15 * $w}] -stretch 0  -anchor center
+    .caseta.nb.f1.lb.l column state -width [expr {15 * $w}] -stretch 1  -anchor center
     .caseta.nb.f1.lb.l heading flag -text "Flag/Var"
     .caseta.nb.f1.lb.l column flag -width [expr {10 * $w}] -stretch 0  -anchor center
     .caseta.nb.f1.lb.l heading macro -text "Macro"
@@ -562,21 +642,36 @@ proc cfg_caseta {} {
     ttk::button .caseta.nb.f1.b1 -text Edit -command cfg_device_chgdlg -state disabled \
     -image [imglist quickedit] -compound left
     grid .caseta.nb.f1.lb  -padx 2 -pady 2 -sticky snew
-    grid .caseta.nb.f1.b1 -padx 4 -pady 4 -sticky ns
-    grid .caseta.nb.f1 -sticky news  -padx 5 -pady 5
-    grid columnconfigure .caseta.nb.f1 1 -weight 1
-    grid rowconfigure .caseta.nb.f1 .caseta.nb.f1.lb -weight 1
+    grid .caseta.nb.f1.b1  -padx 4 -pady 4 
+    grid columnconfigure .caseta.nb.f1.b1 1 -weight 0
     bind .caseta.nb.f1.lb.l <<TreeviewSelect>> {set currentItem [lindex [.caseta.nb.f1.lb.l selection] 0];cfg_devicesel %W}
     bind .caseta.nb.f1.lb.l <Double-1> {cfg_device_dbl %W %x %y}
+    grid .caseta.nb.f1.lb -column 0 -columnspan 2 -sticky news -padx 3
+    grid .caseta.nb.f1.b1 -column 1 -padx {4 13} -pady {2 8} 
+    grid rowconfigure .caseta.nb.f1 .caseta.nb.f1.lb -weight 1
+    grid columnconfigure .caseta.nb.f1 1 -weight 1
+    grid .caseta.nb.f1 -sticky news  -padx 5 -pady 5
 
     destroy .rtclkMenu
     set m [menu .rtclkMenu]
     $m add command -label "Off" -command {cfg_rtclkdlg 0}
     $m add command -label "On" -command {cfg_rtclkdlg 100}
     $m add command -label "Set To" -command {cfg_rtclkdlg setto}
-    bind .caseta.nb.f1.lb.l <Button-3> {cfg_rtclk %W %x %y %X %Y}
+    bind .caseta.nb.f1.lb.l <Button-3> [list cfg_rtclk $m %W %x %y %X %Y]
 
-    .caseta.nb add .caseta.nb.f1 -text Devices -padding 2 -sticky snew
+    # Save changes to column widths. Use unmapped dummy widget to
+    #  capture values before the treeview widget itself is destroyed.
+    ttk::label .caseta.nb.f1.lb.l.canary
+    bind .caseta.nb.f1.lb.l.canary <Destroy> bindWidths
+
+    if {[llength [lindex $cfg(listWidths) 0]] == 5} {
+        foreach col {#0 #1 #2 #3 #4} wid [lindex $cfg(listWidths) 0] {
+            .caseta.nb.f1.lb.l column $col -width $wid
+        }
+    }
+
+    .caseta.nb add .caseta.nb.f1 -text Devices -underline 0
+    .caseta.nb add .caseta.nb.f2 -text "Settings" -underline 0
 
     createDevList
 
@@ -589,9 +684,10 @@ proc cfg_caseta {} {
     grid rowconfigure .caseta .caseta.nb -weight 1
     grid rowconfigure .caseta .caseta.b3 -weight 0  
     bind .caseta <F1> {hvHelp index}
+    bind .caseta <<NotebookTabChanged>> bindTabs
 
-    if {[lindex $cfg(listWidths) 2]} {
-        .caseta.nb select  [lindex $cfg(listWidths) 2]
+    if {[lindex $cfg(listWidths) 1] ne ""} {
+        .caseta.nb select [lindex $cfg(listWidths) 1]
     }
 
     wm protocol .caseta WM_DELETE_WINDOW {.caseta.b3 invoke}
@@ -600,6 +696,16 @@ proc cfg_caseta {} {
         wm geometry .caseta $cfg(geometry)
     }
     wm deiconify .caseta
+}
+
+proc bindWidths {} {
+    global cfg
+    lset cfg(listWidths) 0 [lmap col {#0 #1 #2 #3 #4} {.caseta.nb.f1.lb.l column $col -width}]
+}
+
+proc bindTabs {} {
+    global cfg
+    lset cfg(listWidths) 1 [.caseta.nb index current]
 }
 
 # Get images for Configuration dialog
@@ -616,10 +722,25 @@ proc imglist {i} {
     return [list $img($i) disabled $dim]
 }
 
+proc cfg_devicetype {w} {
+    set item [$w selection]
+    if {$item eq "" || [regexp {devices:.*} $item]} {
+        .caseta.usr.l6 state disabled
+        .caseta.usr.cb6 state disabled
+        .caseta.usr.l4 state disabled
+        .caseta.usr.cb state disabled
+    } else {
+        .caseta.usr.l6 state !disabled
+        .caseta.usr.cb6 state !disabled
+        .caseta.usr.l4 state !disabled
+        .caseta.usr.cb state !disabled
+    }
+}
+
 proc cfg_devicesel {w} {
     set p [winfo parent [winfo parent $w]]
     set item [$w selection]
-    if {$item eq "" || ![regexp {zone:[0-9]+} $item]} {
+    if {$item eq "" || ![regexp {(zone:|devices:[0-9]+:)[0-9]+} $item]} {
         $p.b1 state disabled
     } else {
         $p.b1 state !disabled
@@ -631,7 +752,7 @@ proc cfg_device_dbl {w x y} {
     # Use identify row instead of item for compatibility with 8.5.8 and 8.5.9
     set p [winfo parent [winfo parent $w]]
     set row [$w identify row $x $y]
-    if {$row ne "" && [regexp {zone:[0-9]+} $row]} {
+    if {$row ne "" && [regexp {(zone:|devices:[0-9]+:)[0-9]+} $row]} {
         $p.b1 invoke
     }
 }
@@ -641,13 +762,16 @@ proc cfg_logsel {} {
 
     if {$cfg(logging)} {
          grid .caseta.nb.f2.l31 .caseta.nb.f2.e31 .caseta.nb.f2.b31 -sticky we -padx 3
+         grid .caseta.nb.f2.l33 .caseta.nb.f2.e33 -sticky we -padx 3
     } else {
         grid remove .caseta.nb.f2.l31 .caseta.nb.f2.e31 .caseta.nb.f2.b31
+        grid remove .caseta.nb.f2.l33 .caseta.nb.f2.e33
     }
 }
 
 proc sel_directory {top name} {
     upvar #0 $name var
+
     set dir [ttk::chooseDirectory -initialdir $var -mustexist 1 \
       -parent $top -title "Select directory"]
     if {$dir ne ""} {set var $dir}
@@ -658,7 +782,7 @@ proc sel_file {top name} {
 
     upvar #0 $name var
     set file [tk_getOpenFile -initialdir $dir -initialfile $var  \
-      -parent $top -title "Select Caseta CVonfig File"]
+      -parent $top -title "Select Caseta Config File"]
     if {$file ne ""} {set var $file}
 }
 
@@ -673,8 +797,9 @@ proc createDevList {} {
         $win delete [$win children {}]
         set names {
             zone	"Zones"
+            devices "Devices"
         }
-        foreach n [dict keys $names] {
+        set n zone
             $win insert {} end -id $n -text [dict get $names $n]
             set i 0
             foreach {name id} [dict get $CasetaConfig Zones Name] {
@@ -707,11 +832,22 @@ proc createDevList {} {
                     }
                 }
                 set macro [expr {$macro_on < 256?$macro_on:"-"}]/[expr {$macro_off < 256?$macro_off:"-"}]
-
                 $win insert $n end -id $n:$i -text $name \
                 -values [list $id $level $flag $macro $n $i]
                 incr i
             }
+        set n devices
+        $win insert {} end -id $n -text [dict get $names $n]
+        set i 0
+        foreach {dname id} [dict get $CasetaConfig Devices Name] {
+            $win insert $n end -id $n:$i -text $dname -values [list $id]
+            set j 0
+            foreach {name number} [dict get $CasetaConfig Devices Buttons $id] {
+                $win insert $n:$i end -id $n:$i:$j -text "$dname $name" \
+                -values [list $id:$number "-" $flag $macro $n $j]
+                incr j
+            }
+            incr i
         }
     }
     if {$currentItem ne ""} {
@@ -719,11 +855,20 @@ proc createDevList {} {
     }
 }
 
-# put up device right-click menu
-proc cfg_rtclk {w x y X Y} {
+# put up Zone/Device item right-click menu
+proc cfg_rtclk {m w x y X Y} {
 
     set item [$w identify item $x $y]
     if {$item ne ""} {
+        if {[regexp -nocase {devices:[0-9]+:[0-9]+} $item]} {
+           $m entryconfigure 0 -state disabled
+           $m entryconfigure 2 -state disabled
+        } elseif {[regexp -nocase {zone:[0-9]+} $item]} {
+           $m entryconfigure 0 -state normal
+           $m entryconfigure 2 -state normal
+        } else {
+            return
+        }
         $w selection set $item
         tk_popup .rtclkMenu $X $Y
     }
@@ -731,21 +876,26 @@ proc cfg_rtclk {w x y X Y} {
 
 # process command selected in right-click menu
 proc cfg_rtclkdlg {cmd} {
-    global currentItem
+    global currentItem cfg
 
     if {$cmd eq "setto"} {
         cfg_rtclksettodlg
     } else {
         set win .caseta.nb.f1.lb.l
         set currentItem [lindex [$win selection] 0]
+        if {[regexp {devices:.*} $currentItem]} {
+            if {$cfg(mqttEnable)} {
+                mqttcomm $cfg(netioType) stat <[$win item $currentItem -text]> On
+            }
+        } else {
         sendCmd [$win item $currentItem -text] $cmd
+    }
     }
 }
 
 proc cfg_rtclksettodlg {} {
     global setto
 
-    debug setto red
     ttk::toplevel .caseta.st
     wm title .caseta.st "Set Device"
     wm transient .caseta.st .caseta
@@ -791,8 +941,7 @@ proc cfg_device_chgdlg {} {
     set item [lindex [.caseta.nb.f1.lb.l selection] 0]
     set casname [.caseta.nb.f1.lb.l item $item -text]
     lassign [.caseta.nb.f1.lb.l item $item -values] casid  casstate c macro
-    debug "cfg_device_chgdlg:$item:.caseta.nb.f1.lb.l item $item -text],[.caseta.nb.f1.lb.l item $item -values]" red
-    debug "cfg_device_chgdlg:$casname,$casid,$casstate,$c,$macro;" red
+    debug "cfg_device_chgdlg:$item,$casname,$casid,$casstate,$c,$macro;" red
     if {$c eq "-"} {
         set casflag 512
     } else {
@@ -883,6 +1032,7 @@ proc cfg_device_adddlg {} {
 
     cfg_varflag_select
     cfg_varflag ext
+    cfg_devicetype .caseta.nb.f1.lb.l
 }
 
 proc cfg_device_chg {item} {
@@ -957,10 +1107,14 @@ proc cfg_flag_set {w} {
 
 #! Create flag list for drop-down box
 proc createflaglist {widget} {
-    global  casflag
+    global casflag connected
 
+    set fcnt 0
+    set vcnt 0
+    if {$connected} {
     set fcnt [hvObjectCount flag]
     set vcnt [hvObjectCount var]
+    }
 
     set val "None"
     for {set v 0; set i 1} {$v < $fcnt} {incr v} {
@@ -1033,10 +1187,13 @@ proc cfg_macro_set {w var} {
 }
 #! Create macro list for drop-down box
 proc createmacrolist {widget var} {
+    global connected
     upvar #0 $var macro
 
+    set cnt 0
+    if {$connected} {
     set cnt [hvObjectCount macro]
-
+    }
     set val "None"
     for {set v 0; set i 1} {$v < $cnt} {incr v} {
         set name [hvObjectName macro $v]
@@ -1098,7 +1255,6 @@ proc getCasetaConfig {} {
         tk_messageBox -icon error -message "Failed to open Config File" -detail "$cfg(CasetaConfigFile)\nCheck file."
         return
     }
-
     if {[catch {::json::json2dict $data} ctmp]} {
         debug "Failed to parse json:$ctmp" red
         tk_messageBox -icon error -message "Error Parsing Config File" -detail "$cfg(CasetaConfigFile)\nCompare to Lutron email."
@@ -1112,6 +1268,26 @@ proc getCasetaConfig {} {
         dict set CasetaConfig Zones Name $name $id 
         dict set CasetaConfig Zones ID $id $name
         debug "$id,$name" red
+    }
+    foreach dev [dict get $ctmp LIPIdList Devices] {
+        set id [dict get $dev ID]
+        if {$id == 1} continue
+        set name [dict get $dev Name]
+        dict set CasetaConfig Devices Name $name $id 
+        dict set CasetaConfig Devices ID $id $name
+        set buttons {}
+        foreach button [dict get $dev Buttons] {
+            set number [dict get $button Number]
+            if {[dict exists $$button Name]} {
+                set butname [dict exists $$button Name]
+            } else {
+                set butname "Button $number"
+            }
+            debug "$id:$name:$number,$butname;" red
+            lappend buttons $butname $number
+        }
+        dict set CasetaConfig Devices Buttons $id $buttons
+#        debug "$id,$name" red
     }
     debug [dict get $CasetaConfig] blue
 }
@@ -1160,9 +1336,11 @@ proc netio {args} {
         lassign $args type name
         set state status
     }
-    if {![info exists CasetaConfig] || ![dict exists $CasetaConfig Zones Name $name]} {return}
     if {$type ne $cfg(netioType)} {return ""}
     regexp {^<*([^<>]+)>*$} $name --> name
+    set name [string map {\{ "" \} ""} $name]
+    debug "name:$name,state:$state;" red
+    if {![info exists CasetaConfig] || ![dict exists $CasetaConfig Zones Name $name]} {return}
     set id [dict get $CasetaConfig Zones Name $name]
     if {[info exist deviceState] && [dict exists $deviceState id $id]} {
         set level [expr {int([dict get $deviceState id $id level])}]
@@ -1268,27 +1446,30 @@ proc init {} {
 }
 
 #may not need this!!!!
-proc cinit {} {
+proc cinit {{retry 10}} {
     global connected cfg
 
     debug "cinit!" blue
 
     after cancel cinit
-    if {!$connected} {
-        after 2000 cinit
-        debug "Not Connected to Controller, waiting" red
+    if {!$connected && $retry > 0} {
+        after 2000 [list cinit [expr {$retry - 1}]]
+        casetaLog "Not Connected to Controller, waiting, $retry" red
         return
     }
-
-    debug "Connected to Controller!" red
+    if {!$connected} {
+        casetaLog "Not Connected to Controller, try Client anyway." red
+    } else { 
+        casetaLog "Connected to Controller!" red
+    }
     startClient $cfg(attempts)
     subscribe
 }
 
-proc disconnect {} {debug "disconnect"
+proc disconnect {} {
     global sockChan
     
-    debug "BYE!" red
+    casetaLog "BYE!" red
     subscribe unsub
     catch {chan close $sockChan}
 }
@@ -1296,7 +1477,7 @@ proc disconnect {} {debug "disconnect"
 proc discinit {} {
     global connected
 
-    debug "Disconnected from Controller!" red
+    casetaLog "Disconnected from Controller!" red
     set connected 0
     subscribe unsub
     #wait for reconnect
