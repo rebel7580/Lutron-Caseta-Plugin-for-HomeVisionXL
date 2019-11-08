@@ -9,12 +9,13 @@ The Caseta Client plug-in provides a way to interface Lutron Caseta switches to 
 # Getting Started
 Caseta switches are automatically configured in the plug-in using a file obtained from the Lutron application. 
 
-Before you can set up the plug-in, you must configure the lights and scenes within the Lutron application. The names you assign to your switches are the names you will use in the plug-in. 
+Before you can set up the plug-in, you must configure the lights and scenes within the Lutron application and generate a configuration file. The names you assign to your switches are the names you will use in the plug-in. 
+If you add devices later, you simply generate a new configuration file from the Lutron application.
 # Installing
 
 The HomeVisionXL Caseta Plug-in package consists of the following files: 
-* caseta.hap - the plug-in itself, 
-* caseta.hlp - the help file,
+* caseta.hap - the plug-in itself
+* caseta.hlp - the help file
 
 Click the "Clone or Download" button, then select "Download ZIP".
 Extract the above files into your plugin folder.
