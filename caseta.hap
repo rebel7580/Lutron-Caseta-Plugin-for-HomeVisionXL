@@ -1,7 +1,7 @@
 # Caseta Client plugin for HomeVision - Ron Boston
 # Version 2.0
-# $Revision: 1.32 $
-# $Date: 2021/03/14 22:02:58 $
+# $Revision: 1.34 $
+# $Date: 2021/03/27 19:28:35 $
 # $Requires: HomeVisionXL 2.3 $
 
 # This plugin uses features introduced in version 2.3
@@ -9,7 +9,7 @@ if {[hvVersion] < 2.0 || ![package vsatisfies [hvVersion] 2.3-]} {
     error "Need HomeVisionXL version 2.3 or higher"
 }
 
-set version {$Id: caseta.hap,v 1.32 2021/03/14 22:02:58 ron Exp $}
+set version {$Id: caseta.hap,v 1.34 2021/03/27 19:28:35 ron Exp $}
 
 hvImport debug
 hvImport action
@@ -528,13 +528,14 @@ proc casetaStatus {topic payload {retain 0}} {
 hvImport sendDiscovery
 hvPublic haObjectDiscovery
 proc haObjectDiscovery {args} {
-    global cfg objtypes
+    global cfg
 
     debug "HA Discovery"
 
     set noid 0
     set nous 0
     set retain 0
+    set nodevice 0
     while 1 {
         if {[lindex $args 0] eq "-noid"} {
             set noid 1
@@ -548,6 +549,11 @@ proc haObjectDiscovery {args} {
         }
         if {[lindex $args 0] eq "-retain"} {
             set retain 1
+            set args [lrange $args 1 end]
+            continue
+        }
+        if {[lindex $args 0] eq "-nodevice"} {
+            set nodevice 1
             set args [lrange $args 1 end]
             continue
         }
@@ -565,12 +571,25 @@ proc haObjectDiscovery {args} {
             continue
         }
         if {$ids eq "" || $id in $ids} {
-            sendDiscovery $noid $nous $retain $add $id $name $name caseta $model Caseta Lutron
+            sendDiscovery $noid $nous $retain $nodevice $add $id $name <$name> caseta $model Caseta Lutron
         }
     }
 }
 
+hvPublic getDiscovDevices
+proc getDiscovDevices {} {
 
+    mk::loop row cfg.devices {
+        lassign [mk::get $row id name] id name
+        if {[string match {*:*} $id]} {
+            continue
+        }
+        dict set caseta caseta $id [list "CA-$id" $name]
+    }
+    debug $caseta
+    return $caseta
+
+}
 proc myaction {args} {
     global connected
 
