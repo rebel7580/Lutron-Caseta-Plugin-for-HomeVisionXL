@@ -1,7 +1,7 @@
 # Caseta Client plugin for HomeVision - Ron Boston
 # Version 2.0
-# $Revision: 1.34 $
-# $Date: 2021/03/27 19:28:35 $
+# $Revision: 1.36 $
+# $Date: 2021/06/09 01:02:02 $
 # $Requires: HomeVisionXL 2.3 $
 
 # This plugin uses features introduced in version 2.3
@@ -9,7 +9,7 @@ if {[hvVersion] < 2.0 || ![package vsatisfies [hvVersion] 2.3-]} {
     error "Need HomeVisionXL version 2.3 or higher"
 }
 
-set version {$Id: caseta.hap,v 1.34 2021/03/27 19:28:35 ron Exp $}
+set version {$Id: caseta.hap,v 1.36 2021/06/09 01:02:02 ron Exp $}
 
 hvImport debug
 hvImport action
@@ -525,7 +525,7 @@ proc casetaStatus {topic payload {retain 0}} {
     }
 }
 
-hvImport sendDiscovery
+#hvImport sendDiscovery
 hvPublic haObjectDiscovery
 proc haObjectDiscovery {args} {
     global cfg
@@ -561,7 +561,6 @@ proc haObjectDiscovery {args} {
     }
     set args [lassign $args add]    
     set ids [lassign $args otype]
-
     if {$otype ne "" && [string tolower $otype] ni {caseta}} {
         return
     }
@@ -576,6 +575,98 @@ proc haObjectDiscovery {args} {
     }
 }
 
+hvImport getDiscovConfig
+proc sendDiscovery {noid nous retain nodevice add id name topic object type  model {man "CustomSolutions"}} {
+
+    set cfg {*}[getDiscovConfig]
+
+    set fid "[string toupper [string range $object 0 1]]_$id"
+    set objsuffix [string totitle $object]
+
+    set uid [dict get $cfg clientID]_$fid
+
+    regsub {<} $topic "/[dict get $cfg statPrefix]/" stat
+    regsub {>} $stat "/RESULT/" stat
+    set stat [regsub {//+} [string trim $stat {/}] {/}]
+    regsub {<} $topic "/[dict get $cfg cmndPrefix]/" cmnd
+    regsub {>} $cmnd "/[dict get $cfg pwrPostfix]/" cmnd
+    set cmnd [regsub {//+} [string trim $cmnd {/}] {/}]
+
+    set discov {}
+    debug "$fid, $uid, $topic, $cmnd, $stat;"
+
+    dict set discov uniq_id $uid
+    if {$nous == 1} {
+        set name [string map {_ " "} $name]
+    }
+    if {$noid == 1} {
+        dict set discov name "$name"
+    } else {
+        dict set discov name "[string map {_ "-"} $fid] $name"
+    }
+    dict set discov ret false
+    if {$retain == 1} {
+        dict set discov ret true
+    }
+    dict set discov qos 1
+    if {$nodevice == 0} {
+        dict set discov dev [format {{"ids":["%s"],"name":"%s","mdl":"%s","mf":"%s"}} "[dict get $cfg clientID]_$objsuffix" "HomeVisionXL $objsuffix" $model $man]
+    }
+
+    switch $object {
+        caseta {
+            dict set discov "~" "$stat"
+            dict set discov stat_t "~"
+            dict set discov cmd_t "$cmnd"
+            dict set discov pl_on "ON"
+            dict set discov pl_off "OFF"
+            if {$type in {switch}} {
+                set device "switch"
+                dict set discov val_tpl "{{ value_json.[dict get $cfg pwrPostfix] }}"
+            } else {
+                set device "light"
+                dict set discov stat_val_tpl "{{ value_json.[dict get $cfg pwrPostfix] }}"
+                dict set discov bri_cmd_t "$cmnd"
+                dict set discov bri_stat_t "~"
+                dict set discov bri_scl 100
+                dict set discov bri_val_tpl "{{ value_json.Dimmer }}"
+                dict set discov on_cmd_type "brightness"
+            }
+        }
+        default {
+            return
+        }
+    }
+
+    foreach key [dict keys $discov] {
+        switch $key {
+            bri_scale -
+            qos {
+                set fmt {"%s":%d}
+            }
+            ret -
+            dev {
+                set fmt {"%s":%s}
+            }
+            default {
+                 set fmt {"%s":"%s"}
+            }
+        }
+        lappend jl [format $fmt $key [dict get $discov $key]]
+    }
+    append js "{" [join $jl ","] "}"
+    
+    set fulltopic "homeassistant/$device/$uid/config"
+    debug $fulltopic darkblue
+    debug $js blue
+    if {$add == 0} {
+        set js ""
+    }
+    if {$add == 0 || $add == 1} {
+        mqttComm -retain pub $fulltopic $js 
+    }
+}
+
 hvPublic getDiscovDevices
 proc getDiscovDevices {} {
 
@@ -586,7 +677,6 @@ proc getDiscovDevices {} {
         }
         dict set caseta caseta $id [list "CA-$id" $name]
     }
-    debug $caseta
     return $caseta
 
 }
@@ -1608,8 +1698,8 @@ proc casetaSerial {data} {
 }
 
 hvPublic mqttReady
-proc mqttReady {state} {
-    if {[lindex $state 0] == "connected"} {
+proc mqttReady {status} {
+    if {[dict get $status state] eq "connected"} {
         cinit
     } else {
         #code to run when MQTT is not ready.
